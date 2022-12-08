@@ -1,0 +1,722 @@
+---
+title: "Group A full coding"
+author: Vedika Jha, Sol Park, Alina Chen, Fangming Teng
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+Load in required packages:
+
+```{r}
+library(tidyverse)
+library(ggfortify)
+library(car)
+library(ggiraph)
+library(ggiraphExtra)
+library(MuMIn)
+```
+
+Load in required datasets:
+
+```{r}
+water_quality <- read.csv("LakeOntarioData.csv")
+lat_long_filtered <- read.csv("FilteredWaterQualityLatLong.csv")
+amphibiandata <- read.csv("amphibiandata.csv")
+
+```
+
+## Amphibian data cleaning
+
+In this section: 
+- Data exploration to see number of observations
+- Removal of unneccesary / blank rows and columns
+- Count how many observations and how many species (i.e. species richness) are in each county and generate graph
+
+```{r}
+#delete data from US
+amphibiandata <- amphibiandata[!(amphibiandata$Country=="UnitedStatesofAmerica"),]
+```
+
+###Exploring data
+
+```{r}
+#grouping by country and seeing number of observations per country
+amphibiandata %>% 
+  select(County) %>% 
+  group_by(County) %>% 
+  summarise()
+#55 countys in total 
+```
+
+```{r}
+#seeing how many observations there are per county
+table(amphibiandata$County)
+```
+
+```{r}
+#seeing how many observations there are per county per year
+amphibiandata %>% 
+  group_by(County) %>% 
+  count(YearCollected, sort = TRUE) 
+```
+
+```{r}
+#seeing number of observations for Ontario per year
+amphibiandata %>% 
+  group_by(StateProvince) %>% 
+  count(YearCollected, sort = TRUE) 
+```
+
+```{r}
+#just brief overview of seeing how many different species there is and how many observations per species in Ontario
+amphibiandata %>% 
+  select(StateProvince, YearCollected, SpecificEpithet) %>% 
+  filter(StateProvince %in% c('Ontario')) %>% 
+  count(SpecificEpithet) 
+```
+
+###Removing columns and rows
+
+```{r}
+#remove unnecessary columns
+amphibiandata <- amphibiandata %>% select(c(YearCollected, County, ScientificName, Genus, SpecificEpithet, Locality, DecimalLongitude, DecimalLatitude, Family))
+```
+
+```{r}
+#remove rows with no species info
+amphibiandata <- amphibiandata[!amphibiandata$SpecificEpithet %in% c("sp."), ]
+amphibiandata <- amphibiandata[!amphibiandata$SpecificEpithet=="",]
+```
+
+```{r}
+#creating a new data set that only includes counties surrounding Lake Ontario
+lakeontarioamphdata <- amphibiandata[amphibiandata$County %in% c("DurhamRM", "FrontenacCo", "LennoxandAddingtonCo", "PrinceEdwardCo", "NorthumberlandCo", "Toronto(MetroTorontoRM)", "PeelCo", "HaltonCo", "Hamilton-WentworthRM", "NiagaraRM"), ]
+
+#only including observations from 2015-2019 in data set
+lakeontarioamphdata <- lakeontarioamphdata[lakeontarioamphdata$YearCollected %in% c("2015", "2016", "2017", "2018", "2019"), ]
+```
+
+###Counting species richness and number of observations
+
+```{r}
+#Create dataframe to store species richness and number of observations for each county
+
+sprichdf <- data.frame(matrix(nrow = 0, ncol = 3))
+colnames(sprichdf) <- c("County", "Species Richness", "Observations")
+
+```
+
+```{r}
+#function to extract county, species richness, and observations
+
+GetSprichAndObservationsPerCounty <- function(countyname){
+  countydf <- lakeontarioamphdata %>% 
+  select(County, YearCollected, ScientificName) %>% 
+  filter(County %in% c(countyname)) %>% 
+  count(ScientificName) 
+  
+  return(c(countyname, as.numeric(nrow(countydf)), sum(countydf$n))) 
+  
+}
+```
+
+```{r}
+#add each county to dataframe
+
+for (county in unique(lakeontarioamphdata$County)){
+  sprichdf[nrow(sprichdf)+1,] <- GetSprichAndObservationsPerCounty(county)
+}
+
+```
+
+```{r}
+
+#add Halton and Hamilton together
+HaltonHamilton <- c("Halton & Hamilton-Wentworth", 10, 643)
+sprichdf[nrow(sprichdf)+1,] <- c(HaltonHamilton)
+
+#remove Frontenac , Halton, and Hamilton
+sprichdf <- sprichdf[-8,]
+sprichdf <- sprichdf[-7,]
+sprichdf <- sprichdf[-5,]
+
+
+#rename counties
+sprichdf$County[1] <- "Northhumberland"
+sprichdf$County[2] <- "Durham"
+sprichdf$County[3] <- "Toronto"
+sprichdf$County[4] <- "Prince Edward"
+sprichdf$County[5] <- "Niagara"
+sprichdf$County[6] <- "Lennox Addington"
+sprichdf$County[7] <- "Peel"
+
+```
+
+```{r}
+#plot species richness and number of observations per county
+ggplot(sprichdf, aes(x = County, y = as.numeric(`Species Richness`), fill = County)) + 
+  geom_bar(stat = "identity") +
+  theme_classic() +
+  geom_text(aes(label = Observations), vjust = -0.2, family = "Times New Roman") +
+  labs(title = "Species Richness at Each County on Lake Ontario, Canada", y = "Species Richness")+
+   theme(text = element_text(family = "Times New Roman", face= "bold"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.title = element_text(hjust = 0.5))
+```
+
+##Water Quality data Cleaning
+
+In this section:
+- Exploring number of observations and number of factors measured
+- Filtering out factors with too few observations
+- Filtering data by time and space (keeping observations from 2015-2019, keeping data within 5km of county shorelines)
+- Selecting observations based on biological relevance
+
+
+
+```{r}
+#how many unique factors in the data?
+length(unique(water_quality$FULL_NAME))
+```
+
+```{r}
+#Keep years we are interested in
+water_quality_filtered <- water_quality %>% 
+  filter(YearCollected >= 2015 & YearCollected <= 2019)
+
+```
+
+
+```{r}
+#how many unique factors in the filtered data?
+length(unique(water_quality_filtered$FULL_NAME))
+```
+
+###Filtering out factors with too few observations
+
+```{r}
+#Find out which factors have more than 100 observations 
+
+factors_to_keep <- water_quality_filtered %>% 
+  group_by(FULL_NAME) %>% 
+  tally() %>% 
+  arrange(desc(n)) %>% 
+  filter(n >= 100)
+```
+
+
+```{r}
+#filter out factors with less than 100 observations
+
+#store factors as vector
+factors_to_keep_list <- as.vector(factors_to_keep$FULL_NAME)
+
+water_quality_filtered <- water_quality_filtered[water_quality_filtered$FULL_NAME %in% factors_to_keep_list, ]
+
+#test
+unique(water_quality_filtered$FULL_NAME)
+```
+
+```{r}
+#spread factors into their own columns
+#keep columns of interest (other columns may be added back later for further analysis, but minimal columns are kept right now in order to match location values with county locations)
+#For some factors, multiple replicate were measured. These values are being averaged by using values_fn = mean
+water_quality_wide <- water_quality_filtered %>% 
+  filter(DEPTH_FROM == 1 & DEPTH_TO == 0.0) %>% 
+  select(YearCollected, LATITUDE_DD, LONGITUDE_DD, VALUE, FULL_NAME) %>% 
+  pivot_wider(names_from = FULL_NAME, values_from = VALUE, values_fn = mean)
+
+```
+
+###Filtering out unwanted data points by location
+
+```{r}
+#generate latitude and longitude csv file to upload to google maps
+#write.csv(water_quality_wide, "WaterQualityWideNoUS.csv")
+```
+
+
+```{r}
+#filter out data points in the US
+
+water_quality_wide <- water_quality_wide %>% 
+  filter(!(LATITUDE_DD <= 43.631 & LONGITUDE_DD <= 78.7)) %>% 
+  filter(!LONGITUDE_DD < 76.52) %>% 
+  filter(!(LATITUDE_DD <= 43.5 & LONGITUDE_DD <= 79.1181))
+
+```
+
+```{r}
+
+```
+
+In google maps, points more than 5km away from the shore were removed, and remaining points were mapped to counties.
+
+```{r}
+#filter out data points further than 5km from shoreline
+
+water_quality_wide <- filter(water_quality_wide, LATITUDE_DD %in% lat_long_filtered$LATITUDE_DD & LONGITUDE_DD %in% lat_long_filtered$LONGITUDE_DD)
+
+```
+
+
+```{r}
+#order lat/long data by latitude then longitude, do the same for water quality data
+
+lat_long_filtered <- lat_long_filtered %>% 
+  arrange(LATITUDE_DD, LONGITUDE_DD)
+  
+water_quality_wide <- water_quality_wide %>% 
+  arrange(LATITUDE_DD, LONGITUDE_DD)
+
+```
+
+```{r}
+#join county data to water quality
+
+water_quality_county <- cbind(lat_long_filtered$WKT, water_quality_wide)
+
+#renaming county column
+names(water_quality_county)[names(water_quality_county) == "lat_long_filtered$WKT"] <- "County"
+
+```
+
+
+```{r}
+#some factor are spread over two columns, need to combine them
+
+water_quality_county %>% 
+  select(`NITRATE+NITRITE NITROGEN,FILTERED`, `NITRATE+NITRITE NITROGEN, FILTERED`)
+
+for (i in 1:length(water_quality_county$`NITRATE+NITRITE NITROGEN,FILTERED`)){
+  if (is.na(water_quality_county$`NITRATE+NITRITE NITROGEN,FILTERED`[i])){
+    water_quality_county$`NITRATE+NITRITE NITROGEN,FILTERED`[i] <- water_quality_county$`NITRATE+NITRITE NITROGEN, FILTERED`[i]
+  }
+}
+
+water_quality_county %>% 
+  select(`SOLUBLE REACTIVE PHOSPHOROUS`, `PHOSPHOROUS,SOLUBLE REACTIVE,FILTERED`)
+
+for (i in 1:length(water_quality_county$`PHOSPHOROUS,SOLUBLE REACTIVE,FILTERED`)){
+  if (is.na(water_quality_county$`PHOSPHOROUS,SOLUBLE REACTIVE,FILTERED`[i])){
+    water_quality_county$`PHOSPHOROUS,SOLUBLE REACTIVE,FILTERED`[i] <- water_quality_county$`SOLUBLE REACTIVE PHOSPHOROUS`[i]
+  }
+}
+
+water_quality_county %>% 
+  select(`AMMONIA NITROGEN,SOLUBLE`, `AMMONIA NITROGEN, SOLUBLE`)
+
+for (i in 1:length(water_quality_county$`AMMONIA NITROGEN,SOLUBLE`)){
+  if (is.na(water_quality_county$`AMMONIA NITROGEN,SOLUBLE`[i])){
+    water_quality_county$`AMMONIA NITROGEN,SOLUBLE`[i] <- water_quality_county$`AMMONIA NITROGEN, SOLUBLE`[i]
+  }
+}
+
+#remove duplicate columns
+water_quality_county <- water_quality_county %>% 
+  select(-`AMMONIA NITROGEN, SOLUBLE`, -`SOLUBLE REACTIVE PHOSPHOROUS`, -`NITRATE+NITRITE NITROGEN, FILTERED`)
+  
+
+```
+
+```{r}
+#filtering out more variables for PCA because several variables have many NAs (after the filtering by location)
+water_quality_county %>% 
+  summarise_all(~sum(is.na(.)))
+```
+
+
+```{r}
+#filter for variables that aren't bio. relevant / have too many NAs
+water_quality_county <- water_quality_county %>% 
+  select(-`TEMPERATURE PROFILE LOCATION`, -`TEMPERATURE EBT`, -`CARBON,DISSOLVED ORGANIC`, -`DISSOLVED INORGANIC CARBON`, -`OXYGEN,% SAT. DISSOLVED`, -`RESIDUE,NON-FILTERED`, -`CHLOROPHYL A, UNCORRECTED`, -`CHLOROPHYLL A, CORRECTED PHAEOPHYTIN`, -`ALKALINITY,PHENOLPHTHALEIN,FILTERED`, -`PHOSPHOROUS,SOLUBLE REACTIVE,FILTERED`, -`TOTAL PHOSPHOROUS FILTERED`, -TURBIDITY)
+```
+
+```{r}
+water_quality_county %>% 
+  summarise_all(~sum(is.na(.)))
+#this leaves is with almost no NA values. Any rows with remaining NA values, most of which come from the same row, will be omitted in the PCA
+#Despite the abundance of NAs in Ammonia and nitrate/nitrite, we have decided to keep their columns and remove those rows from the PCA due both of those chemicals' important effects on water quality as described in the literature
+```
+###Outliers Assessment Before PCA
+
+- Visually assess for outliers in each water quality factor
+- None removed for downstream analysis as this was reduce sample size and we are not sure if these outliers are measurement errors or other errors or if just natural variation in data
+```{r}
+#visually assessing for outliers, create new dataset to change names to be shorter for boxplots
+water_quality_wide_outliers_check <- water_quality_county
+
+#renaming water quality factors to be shorter for boxplot
+
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "TRANSPARENCY"] <- "Transparency"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "SPECIFIC CONDUCTANCE 25 DEG. C"] <- "Conductance"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "PH"] <- "pH"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "OXYGEN,CONCENTRATION DISSOLVED"] <- "Dissolved_O2"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) ==  "TOTAL KJELDAHL NITROGEN,FILTERED"] <- "Nitrogen"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) ==  "AMMONIA NITROGEN,SOLUBLE"] <- "Ammonia"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) ==  "NITRATE+NITRITE NITROGEN,FILTERED"] <- "Nitrate_Nitrite"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) ==  "TOTAL ALKALINITY, FILTERED"] <- "Alkalinity"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "FLUORIDE"] <- "Fluoride"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "CHLORIDE"] <- "Chloride"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "SULPHATE"] <- "Sulphate"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) ==  "TOTAL PHOSPHOROUS"] <- "Phosphorous"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "CALCIUM"] <- "Calcium"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "POTASSIUM"] <- "Potassium"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "MAGNESIUM"] <- "Magnesium"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "SODIUM"] <- "Sodium"
+names(water_quality_wide_outliers_check)[names(water_quality_wide_outliers_check) == "SILICA"] <- "SiO2"
+
+#convering from wide to long to assess for outliers using a boxplot
+water_quality_long_outliers_check <- gather(water_quality_wide_outliers_check, key = "key", value = "value", Transparency, Conductance, pH, Dissolved_O2, Nitrogen, Ammonia, Nitrate_Nitrite, Alkalinity, Fluoride, Chloride, Sulphate, Phosphorous, Calcium, Potassium, Magnesium, Sodium, SiO2)
+```
+
+```{r}
+#checking for outliers using a boxplot
+ggplot(water_quality_long_outliers_check, aes(x=key, y=value)) + 
+  geom_boxplot() +
+  labs(title = "Assessing for outliers in 17 water quality factors to be included in analysis", x = "Water Quality Factors", y = "Values") + 
+  theme_classic() +
+  theme(text = element_text(family = "Times New Roman", face = "bold"), axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), plot.title = element_text(hjust = 0.5))
+```
+
+##Principal Component Analysis
+
+In this section:
+- PCA on all samples, with graphs
+- PCA on means of each county with graphs
+
+###Principal Component Analysis on all samples
+
+```{r}
+
+waterquality.pca1 <- prcomp(na.omit(water_quality_county[, c(5:21)]), scale. = TRUE)
+summary(waterquality.pca1)  #pulls out importance of axes
+str(waterquality.pca1)
+
+
+```
+
+```{r}
+waterquality.pca1$x
+#shows location of points in multidimensional space of PC axes
+```
+
+```{r}
+waterquality.pca1$rotation
+# shows which water quality factrs are contributing most strongly to each PC axis
+```
+
+```{r}
+autoplot(waterquality.pca1,
+         loadings=TRUE,
+         loadings.label=TRUE,
+         loadings.colour="grey30",
+         #loadings.label.vjust = 1.2,
+         #loadings.label.hjust = 2,
+         loadings.label.size = 3,
+         #loadings.label.repel = TRUE,
+         data = na.omit(water_quality_county),
+         colour = "County") +
+  theme_classic()
+
+#graphs were altered in an external software (Preview) to fix labels
+```
+
+```{r}
+plot(waterquality.pca1)
+#graphs the percentage of variation explained by each axis
+```
+
+### PCA using the mean values for each county
+
+```{r}
+water_quality_county_means <- water_quality_county %>% 
+  group_by(County) %>% 
+  summarise(
+    Transparency = mean(na.omit(TRANSPARENCY)),
+    Conductance = mean(na.omit(`SPECIFIC CONDUCTANCE 25 DEG. C`)),
+    pH = mean(na.omit(PH)),
+    Oxygen_concentration = mean(na.omit(`OXYGEN,CONCENTRATION DISSOLVED`)),
+    Nitrogen = mean(na.omit(`TOTAL KJELDAHL NITROGEN,FILTERED`)),
+    Ammonia = mean(na.omit(`AMMONIA NITROGEN,SOLUBLE`)),
+    Nitrate_nitrite = mean(na.omit(`NITRATE+NITRITE NITROGEN,FILTERED`)),
+    Alkalinity = mean(na.omit(`TOTAL ALKALINITY, FILTERED`)),
+    Fluoride = mean(na.omit(FLUORIDE)),
+    Chloride = mean(na.omit(CHLORIDE)),
+    Sulphate = mean(na.omit(SULPHATE)),
+    Phosphorous = mean(na.omit(`TOTAL PHOSPHOROUS`)),
+    Calcium = mean(na.omit(CALCIUM)),
+    Potassium = mean(na.omit(POTASSIUM)),
+    Magnesium = mean(na.omit(MAGNESIUM)),
+    Sodium = mean(na.omit(SODIUM)),
+    Silica = mean(na.omit(SILICA)))
+    
+
+```
+
+```{r}
+waterquality.pca2 <- prcomp(water_quality_county_means[, c(2:18)], scale. = TRUE)
+summary(waterquality.pca2)  #pulls out importance of axes
+str(waterquality.pca2)
+```
+
+```{r}
+waterquality.pca2$x
+#shows location of points in multidimensional space of PC axes
+```
+
+```{r}
+waterquality.pca2$rotation
+# shows which water quality factors are contributing most strongly to each PC axis
+```
+
+```{r}
+autoplot(waterquality.pca2,
+         loadings=TRUE,
+         loadings.label=TRUE,
+         loadings.colour="grey30",
+         #loadings.label.vjust = 1.2,
+         #loadings.label.hjust = 2,
+         loadings.label.size = 3,
+         #loadings.label.repel = TRUE,
+         data = na.omit(water_quality_county_means),
+         colour = "County") +
+  theme_classic()
+
+#graphs were altered in an external software (Preview) to fix labels
+
+```
+
+```{r}
+plot(waterquality.pca2)
+#graphs the percentage of variation explained by each axis
+```
+
+##ANOVA
+
+In this section:
+- Combining dataframes for ANOVA
+- Running ANOVA on water chemistry (PCA1 axis) and pH
+- Testing assumptions of an ANOVA + Tukey tests
+
+###Combining dataframes for ANOVA
+
+```{r}
+#extract PCA1 axis
+ANOVAPCA1axis <- waterquality.pca1$x[,1]
+
+#convert PCA1 axis into data frame
+ANOVAPCA1axis <- data.frame(ANOVAPCA1axis)
+
+#bind PCA1 axis values to water quality data
+waterqualityforANOVA <- cbind(ANOVAPCA1axis, na.omit(water_quality_county))
+```
+
+###Water Chemistry ANOVA 
+
+```{r}
+#ANOVA with PCA1axis
+ANOVAcounty <- aov(ANOVAPCA1axis ~ County, data = waterqualityforANOVA)
+
+summary(ANOVAcounty)
+```
+
+
+####Assumptions
+
+```{r}
+#test for normality
+shapiro.test(waterqualityforANOVA$ANOVAPCA1axis)
+```
+
+
+
+```{r}
+#test for homogeneity of variance
+leveneTest(ANOVAPCA1axis ~ County, data = waterqualityforANOVA)
+
+#homogeneity of variance
+plot(ANOVAcounty, 1)
+```
+####Tukey test
+
+```{r}
+#Tukey with PCA1axis and County
+
+countyTukey <- TukeyHSD(ANOVAcounty)
+str(countyTukey)
+countyTukeydf <- as.data.frame(countyTukey$County)
+# Rename problematic column
+colnames(countyTukeydf)[4] <- "p_adj"
+# Now we pick out the significant pairs (i.e., pairs that are not the same)
+countyTukeydf %>%
+rownames_to_column("pairs") %>%
+filter(p_adj<=0.05)
+```
+###pH ANOVA
+
+```{r}
+#PH ANOVA
+ANOVAPH <- aov(PH ~ County, data = waterqualityforANOVA)
+
+summary(ANOVAPH)
+```
+####Assumptions
+
+```{r}
+#test for normality
+shapiro.test(waterqualityforANOVA$PH)
+
+#test for homogeneity of variance
+leveneTest(PH ~ County, data = waterqualityforANOVA)
+
+#homogeneity of variance
+plot(ANOVAPH, 1)
+```
+
+##Linear Regressions
+
+In this section:
+- Creating linear regression models
+- Testing for assumptions
+- Graphing the models
+
+###Combining dataframes for linear regression
+
+```{r}
+#find means of each water quality factor by county
+water_quality_mean_after_PCA2 <- water_quality_county %>% 
+  select(County, PH, `OXYGEN,CONCENTRATION DISSOLVED`) %>% 
+  group_by(County) %>% 
+  drop_na() %>% 
+  summarise_at(c('PH', "OXYGEN,CONCENTRATION DISSOLVED"), mean)
+```
+
+```{r}
+#extract PCA1 axis
+lmPCA1axis <- waterquality.pca2$x[,1]
+
+#convert PCA1 axis into data frame
+lmPCA1axis <- data.frame(lmPCA1axis)
+
+#bind PCA1 axis values to water quality data
+waterqualityformodel <- cbind(lmPCA1axis, water_quality_mean_after_PCA2)
+```
+
+```{r}
+#adding species richness to water quality data
+
+#add empty column for species richness
+waterqualityformodel <- waterqualityformodel %>% 
+  add_column(Sprich = 0)
+
+for (i in 1:length(waterqualityformodel$County)){
+  if (waterqualityformodel$County[i] == "NIAGARA"){
+    waterqualityformodel$Sprich[i] = 8
+  }
+  else if (waterqualityformodel$County[i] == "HAMILTON HALTON"){
+    waterqualityformodel$Sprich[i] = 10
+  }
+  else if (waterqualityformodel$County[i] == "PEEL"){
+    waterqualityformodel$Sprich[i] = 7
+  }
+  else if (waterqualityformodel$County[i] == "TORONTO"){
+    waterqualityformodel$Sprich[i] = 8
+  }
+  else if (waterqualityformodel$County[i] == "NORTHHUMBERLAND"){
+    waterqualityformodel$Sprich[i] = 8
+  }
+  else if (waterqualityformodel$County[i] == "PRINCE EDWARD COUNTY"){
+    waterqualityformodel$Sprich[i] = 7
+  }
+  else if (waterqualityformodel$County[i] == "LENNOX ADDINGTON"){
+    waterqualityformodel$Sprich[i] = 9
+  }
+   else if (waterqualityformodel$County[i] == "DURHAM"){
+    waterqualityformodel$Sprich[i] = 8
+  }
+}
+```
+
+###Creating linear models
+
+```{r}
+#linear regression model with PCA1 and oxygen (just to see if another factors in PC2 might be better fit than pH)
+lmmodelO2 <- lm(Sprich ~ lmPCA1axis + `OXYGEN,CONCENTRATION DISSOLVED`, data = waterqualityformodel)
+
+summary(lmmodelO2)
+
+#checking assumptions
+par(mfrow = c(2,2))
+plot(lmmodelO2)
+
+#checking model fit
+AICc(lmmodelO2)
+```
+
+```{r}
+#linear regression model with PCA1 and PH
+lmmodelPH <- lm(Sprich ~ lmPCA1axis + PH, data = waterqualityformodel)
+
+summary(lmmodelPH)
+
+#checking assumptions
+par(mfrow = c(2,2))
+plot(lmmodelPH)
+
+#checking model fit
+AICc(lmmodelPH)
+```
+
+```{r}
+#trying transformation to see if assumption of homogeneity of variance are met
+
+#log
+lmmodelPHlog <- lm(log10(Sprich) ~ lmPCA1axis + PH, data = waterqualityformodel)
+plot(lmmodelPHlog, 1:2)
+
+#squared
+lmmodelPHsquared <- lm((Sprich)^2 ~ lmPCA1axis + PH, data = waterqualityformodel)
+plot(lmmodelPHsquared, 1:2)
+
+#cubed
+lmmodelPHcubed <- lm((Sprich)^3 ~ lmPCA1axis + PH, data = waterqualityformodel)
+plot(lmmodelPHcubed, 1:2)
+
+#squareroot
+lmmodelPHsqrt <- lm(sqrt(Sprich) ~ lmPCA1axis + PH, data = waterqualityformodel)
+plot(lmmodelPHsqrt, 1:2)
+
+#reciprocal
+lmmodelPHreciprocal <- lm((1/Sprich) ~ lmPCA1axis + PH, data = waterqualityformodel)
+plot(lmmodelPHreciprocal, 1:2)
+```
+
+###Graphing linear models
+
+```{r}
+
+ggPredict(lmmodelPH, colorn = 3, point = TRUE) + ylim(0,12) +
+  labs(title = "Title", x = "Water Chemistry",  y = "Species Richness") +
+  theme_classic() + 
+  labs(title = "Multiple Linear Regression of Water Chemistry and pH \n on Amphibian Species Richness", y = "Amphibian Species Richness") +
+  theme(text = element_text(family = "Times New Roman", face= "bold"), plot.title = element_text(hjust = 0.5)) +
+   annotate(geom="text", x=2.3, y=11.5, label="Species Richness = -93.47013 + 0.24484*Water Chemistry + 12.02407*pH",
+              color="black", family = "Times New Roman")
+```
+
+```{r}
+#graph linear model PCA1axis just for testing
+ggplot(waterqualityformodel, aes(x=lmPCA1axis, y=Sprich)) +
+geom_point(aes(color=County)) +
+geom_smooth(method="lm")+
+  theme_classic()
+
+#graph linear model PH just for testing
+ggplot(waterqualityformodel, aes(x=PH, y=Sprich)) +
+geom_point(aes(color=County)) +
+geom_smooth(method="lm")+
+  theme_classic()
+```
+
+
+
